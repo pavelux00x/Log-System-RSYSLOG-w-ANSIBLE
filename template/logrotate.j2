@@ -1,0 +1,11 @@
+/var/log/serverbackupansible/*.log {
+    daily
+    rotate 7
+    compress
+    delaycompress
+    missingok
+    notifempty
+    create 0644 root adm
+    postrotate
+    endscript
+}

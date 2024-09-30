@@ -1,0 +1,146 @@
+---
+- name: Logging System
+  hosts: server_log server_host
+  become: true
+  vars:
+    ansible_python_interpreter: /usr/bin/python3
+  tasks:
+    - name: ping
+      ansible.builtin.ping:
+    - name: Update packages
+      ansible.builtin.apt:
+        update_cache: yes
+        upgrade: yes
+    - name: debug
+      debug:
+        var=hostvars[inventory_hostname]['ansible_default_ipv4']['address']
+    - name: Install packages
+      apt:
+        name: "{{ item }}"
+        state: present
+      loop:
+        - rsyslog
+        - logrotate
+        - ufw
+        - firewalld
+        - python3-firewall
+        - python3-ufw
+        - python3-pip
+        - python3-jinja2
+        - python3-apt
+        - logrotate
+      ignore_errors: yes
+   
+    - name: Start service
+      ansible.builtin.service:
+        name: rsyslog
+        state: started
+    - name: Block for Main server
+      block:
+        - name: Remove Hastag - 1 
+          ansible.builtin.replace:
+            path: /etc/rsyslog.conf
+            regexp: '^#[ ]*module\(load="imtcp"\)$' 
+            replace: 'module(load="imtcp")'
+        - name: Remove Hastag - 2
+          ansible.builtin.replace:
+            path: /etc/rsyslog.conf
+            regexp: '^#[ ]*module\(load="imudp"\)$' 
+            replace: 'module(load="imudp")'
+        - name: Remove Hastag - Enable service port - 1
+          ansible.builtin.replace:
+            path: /etc/rsyslog.conf
+            regexp: '^#[ ]*input\(type="imtcp"[ ]*port="514"\)$' 
+            replace: 'input(type="imtcp" port="514")'
+        - name: Remove Hastag
+          ansible.builtin.replace:
+            path: /etc/rsyslog.conf
+            regexp: '^#[ ]*input\(type="imudp"[ ]*port="514"\)$' 
+            replace: 'input(type="imudp" port="514")'
+
+        - name: firewalld
+          ansible.posix.firewalld:
+            port: 514/tcp
+            permanent: true
+            state: enabled
+            immediate: true
+        - name: firewalld
+          ansible.builtin.service:
+            name: firewalld
+            state: restarted
+
+          notify: restart service
+        - name: Add line
+          ansible.builtin.lineinfile:
+            dest: /etc/rsyslog.conf
+            line: |
+              $template RemoteLogs,"/var/log/%HOSTNAME%/%PROGRAMNAME%.log"
+              *.* ?RemoteLogs
+              & ~
+            state: present
+          notify: restart service
+      when: "'server_log' in group_names"
+    - name: Block host server
+      block:
+        - name: Remove Hastag - 1 
+          ansible.builtin.replace:
+            path: /etc/rsyslog.conf
+            regexp: '^#[ ]*module\(load="imtcp"\)$' 
+            replace: 'module(load="imtcp")'
+        - name: Remove Hastag - 2
+          ansible.builtin.replace:
+            path: /etc/rsyslog.conf
+            regexp: '^#[ ]*module\(load="imudp"\)$' 
+            replace: 'module(load="imudp")'
+        - name: template
+          ansible.builtin.template:
+            src: template/50-default.conf.j2
+            dest: /etc/rsyslog.d/50-default.conf
+            mode: 0644
+        - name: Add line to rsyslog configuration
+          ansible.builtin.lineinfile:
+            dest: /etc/rsyslog.d/50-default.conf
+            line: |
+              # This line sends all log messages (*) to the remote logging server specified by the IP address of the first host in the 'server_log' group.
+              # The IP address is dynamically retrieved from the 'hostvars' dictionary, which contains variables for all hosts in the inventory.
+              # 'hostvars[groups['server_log'][0]].ansible_default_ipv4.address' accesses the default IPv4 address of the first host in 'server_log' group.
+              *.* @@{{ hostvars[groups['server_log'][0]].ansible_default_ipv4.address }}:514
+          notify: restart service
+          when: "'server_host' in group_names"
+    - name: Logrotate Setup
+      block:
+        - name: Template
+          ansible.builtin.template:
+              src: template/logrotate.j2
+              dest: /etc/logrotate.d/rsyslog_logrotate
+              mode: 0644
+          notify: restart service
+        - name: Set Crontab
+          ansible.builtin.cron:
+            name: logrotate
+            job: /usr/sbin/logrotate /etc/logrotate.d/rsyslog_logrotate
+            minute: 0
+            hour: 0
+            day: '*'
+            month: '*'
+            user: root
+            state: present
+      when: "'server_log' in group_names"
+
+
+
+        
+
+
+
+        
+      
+    
+
+
+  handlers:
+    - name: restart service
+      ansible.builtin.service:
+        name: rsyslog
+        state: restarted
+        
